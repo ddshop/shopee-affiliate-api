@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const { urls, subIds } = req.body;
+    const { urls } = req.body;
 
     if (!urls || !Array.isArray(urls) || urls.length === 0) {
       return res.status(400).json({
@@ -27,11 +27,24 @@ module.exports = async function handler(req, res) {
     }
 
     if (urls.length > 5) {
-  return res.status(400).json({
-    success: false,
-    error: "每次最多只能轉換 5 個蝦皮連結"
-  });
-}
+      return res.status(400).json({
+        success: false,
+        error: "每次最多只能轉換 5 個蝦皮連結"
+      });
+    }
+
+    const cleanUrls = urls
+      .map((url) => String(url).trim())
+      .filter(Boolean);
+
+    const invalidUrl = cleanUrls.find((url) => !url.includes("shopee.tw"));
+
+    if (invalidUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "請確認輸入的都是蝦皮台灣連結"
+      });
+    }
 
     const appId = process.env.SHOPEE_APP_ID;
     const secret = process.env.SHOPEE_SECRET;
@@ -45,94 +58,76 @@ module.exports = async function handler(req, res) {
 
     const endpoint = "https://open-api.affiliate.shopee.tw/graphql";
 
-    const results = [];
+    // 蝦皮後台一次最多 5 個連結，因此這裡一次送出，不再用迴圈分批呼叫
+    const originUrl = cleanUrls.join("\n");
 
-    for (const originalUrl of urls) {
-      const cleanUrl = String(originalUrl).trim();
-
-      if (!cleanUrl.includes("shopee.tw")) {
-        results.push({
-          originalUrl: cleanUrl,
-          success: false,
-          error: "不是有效的蝦皮台灣連結"
-        });
-        continue;
-      }
-
-      const safeSubIds = Array.isArray(subIds)
-        ? subIds.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
-        : [];
-
-      const subIdsPart =
-        safeSubIds.length > 0
-          ? `, subIds: ${JSON.stringify(safeSubIds)}`
-          : "";
-
-      const query = `
-        mutation {
-          generateShortLink(input: {
-            originUrl: ${JSON.stringify(cleanUrl)}
-            ${subIdsPart}
-          }) {
-            shortLink
-          }
+    const query = `
+      mutation {
+        generateShortLink(input: {
+          originUrl: ${JSON.stringify(originUrl)}
+        }) {
+          shortLink
         }
-      `;
-
-      const payload = JSON.stringify({ query });
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-
-      const signature = crypto
-        .createHash("sha256")
-        .update(appId + timestamp + payload + secret)
-        .digest("hex");
-
-      const authorization =
-        `SHA256 Credential=${appId}, Timestamp=${timestamp}, Signature=${signature}`;
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: authorization
-        },
-        body: payload
-      });
-
-      const data = await response.json();
-
-      if (data.errors && data.errors.length > 0) {
-        results.push({
-          originalUrl: cleanUrl,
-          success: false,
-          error: data.errors[0].message || "Shopee API 發生錯誤",
-          raw: data
-        });
-        continue;
       }
+    `;
 
-      const shortLink = data?.data?.generateShortLink?.shortLink;
+    const payload = JSON.stringify({ query });
+    const timestamp = Math.floor(Date.now() / 1000).toString();
 
-      if (!shortLink) {
-        results.push({
-          originalUrl: cleanUrl,
-          success: false,
-          error: "沒有取得 shortLink",
-          raw: data
-        });
-        continue;
-      }
+    const signature = crypto
+      .createHash("sha256")
+      .update(appId + timestamp + payload + secret)
+      .digest("hex");
 
-      results.push({
-        originalUrl: cleanUrl,
-        success: true,
-        shortLink
+    const authorization =
+      `SHA256 Credential=${appId}, Timestamp=${timestamp}, Signature=${signature}`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authorization
+      },
+      body: payload
+    });
+
+    const data = await response.json();
+
+    if (data.errors && data.errors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: data.errors[0].message || "Shopee API 發生錯誤",
+        raw: data
       });
+    }
+
+    const shortLinkData = data?.data?.generateShortLink?.shortLink;
+
+    if (!shortLinkData) {
+      return res.status(400).json({
+        success: false,
+        error: "沒有取得 shortLink",
+        raw: data
+      });
+    }
+
+    let shortLinks = [];
+
+    if (Array.isArray(shortLinkData)) {
+      shortLinks = shortLinkData;
+    } else {
+      shortLinks = String(shortLinkData)
+        .split(/\n+/)
+        .map((link) => link.trim())
+        .filter(Boolean);
     }
 
     return res.status(200).json({
       success: true,
-      results
+      results: shortLinks.map((shortLink) => ({
+        success: true,
+        shortLink
+      }))
     });
   } catch (error) {
     return res.status(500).json({
