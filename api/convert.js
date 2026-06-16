@@ -26,6 +26,13 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    if (urls.length > 5) {
+  return res.status(400).json({
+    success: false,
+    error: "每次最多只能轉換 5 個蝦皮連結"
+  });
+}
+
     const appId = process.env.SHOPEE_APP_ID;
     const secret = process.env.SHOPEE_SECRET;
 
