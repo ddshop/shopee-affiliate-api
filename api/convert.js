@@ -37,14 +37,16 @@ module.exports = async function handler(req, res) {
       .map((url) => String(url).trim())
       .filter(Boolean);
 
-    const invalidUrl = cleanUrls.find((url) => !url.includes("shopee.tw"));
+   const invalidUrl = cleanUrls.find((url) => {
+  return !url.includes("shopee.tw") && !url.includes("tw.shp.ee");
+});
 
-    if (invalidUrl) {
-      return res.status(400).json({
-        success: false,
-        error: "請確認輸入的都是蝦皮台灣連結"
-      });
-    }
+if (invalidUrl) {
+  return res.status(400).json({
+    success: false,
+    error: "請確認輸入的是蝦皮台灣連結"
+  });
+}
 
     const appId = process.env.SHOPEE_APP_ID;
     const secret = process.env.SHOPEE_SECRET;
